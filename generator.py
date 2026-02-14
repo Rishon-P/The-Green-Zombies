@@ -24,10 +24,8 @@ def pack_comp3(number):
     Returns:
         bytearray: The packed binary representation
     """
-    # Convert number to string digits and pad if needed (must have odd length)
-    digit_string = str(abs(number))
-    if len(digit_string) % 2 == 0:
-        digit_string = "0" + digit_string  # Pad with leading zero
+    # Convert number to string digits, padded to 5 digits (fills 3 bytes with sign nibble)
+    digit_string = str(abs(number)).zfill(5)
 
     # Pack pairs of digits into bytes: '123' -> 0x12, 0x3C
     # Each byte contains two decimal digits in hexadecimal form
@@ -64,16 +62,16 @@ def create_ebcdic_record(record_id, name, amount, log_text):
         bytes: Complete EBCDIC/binary record concatenated together
     """
     # Convert and pad ID: text to EBCDIC encoding, left-aligned in 10 chars
-    id_bytes = codecs.encode(f"{record_id:<10}", "cp037")
+    id_bytes = codecs.encode(f"{record_id:<10}"[:10], "cp037")
 
     # Convert and pad name: text to EBCDIC encoding, left-aligned in 20 chars
-    name_bytes = codecs.encode(f"{name:<20}", "cp037")
+    name_bytes = codecs.encode(f"{name:<20}"[:20], "cp037")
 
     # Convert amount: integer to packed decimal (COMP-3 binary format)
     amount_bytes = pack_comp3(amount)
 
     # Convert and pad log message: text to EBCDIC encoding, left-aligned in 50 chars
-    log_bytes = codecs.encode(f"{log_text:<50}", "cp037")
+    log_bytes = codecs.encode(f"{log_text:<50}"[:50], "cp037")
 
     # Concatenate all fields in order
     return id_bytes + name_bytes + amount_bytes + log_bytes
