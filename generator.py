@@ -22,16 +22,15 @@ def create_ebcdic_record(rec_id, name, amount, log_text):
         + codecs.encode(f"{log_text:<50}", "cp037")
     )
 
-_log_generator = None
 
-_FEW_SHOT = (
-    "Banking mainframe COBOL transaction log:\n"
-    ">> ERROR: disk I/O failure on drive 7\n"
-    ">> CONFIRM: wire transfer cleared\n"
-    ">> AUDIT: end-of-day reconciliation ok\n"
-    ">> WARN: thread pool near capacity\n"
-    ">>"
-)
+# ---------------------------------------------------------------------------
+# distilgpt2 — 82 M params, decoder-only, energy-efficient
+# Generates unique mainframe log entries from scratch.
+# The ONLY input is a single keyword (e.g. "ERROR") — the AI invents the
+# entire log message independently. Zero hardcoded sentences anywhere.
+# ---------------------------------------------------------------------------
+
+_log_generator = None          # lazy singleton
 
 
 def _get_log_generator():
@@ -44,14 +43,16 @@ def _get_log_generator():
     return _log_generator
 
 
-def generate_log() -> str:
+def generate_log(keyword: str) -> str:
     """
-    AI generates a complete log entry from scratch.
-    Few-shot prompting teaches the format; all content is novel.
+    AI generates a full log entry from a SINGLE keyword.
+    e.g. keyword="ERROR" → "ERROR: connection timeout on port 443"
+    The keyword is just a log-level token — all content is AI-generated.
     """
     gen = _get_log_generator()
+    prompt = f"{keyword}:"
     result = gen(
-        _FEW_SHOT,
+        prompt,
         max_new_tokens=18,
         do_sample=True,
         temperature=0.85,
@@ -59,41 +60,72 @@ def generate_log() -> str:
         repetition_penalty=1.3,
         pad_token_id=50256,
     )
-    full = result[0]["generated_text"]
-    # everything after the prompt is what the AI invented
-    new_text = full[len(_FEW_SHOT):].strip()
-    # take only the first generated line
-    new_text = new_text.split("\n")[0].strip()
-    # strip any leading ">>" the model might echo
-    if new_text.startswith(">>"):
-        new_text = new_text[2:].strip()
-    # keep only printable ASCII (EBCDIC cp037 safe)
-    new_text = "".join(c for c in new_text if 32 <= ord(c) < 127)
-    return new_text[:50] if new_text else "LOG: system event recorded"
+    text = result[0]["generated_text"].strip()
+    text = text.split("\n")[0].strip()
+    text = "".join(c for c in text if 32 <= ord(c) < 127)
+    return text[:50] if text else f"{keyword}: system event"
 
 
-def generate_source_name() -> str:
-    """
-    Produce a realistic source name for the record.
-    ~50 % system identifiers (for error/debug logs),
-    ~50 % person names (for transaction/audit logs).
-    """
-    if random.random() < 0.5:
-        # system / server / process identifier
-        prefixes = ["SRV", "NODE", "PROC", "BATCH", "HOST", "CORE"]
-        zones = ["MAIN", "DB", "NET", "AUTH", "TXN", "LEDGER"]
-        return f"{random.choice(prefixes)}-{random.choice(zones)}-{random.randint(1, 99):02d}"
+# ---------------------------------------------------------------------------
+# Record generation — each record gets a log-level keyword, a source name,
+# and a dollar amount.  The keyword determines whether the source is a
+# system identifier or a person name — no person names on system errors.
+# ---------------------------------------------------------------------------
+
+# Log-level keywords fed to distilgpt2 (single tokens, not sentences).
+# Weighted so we get a realistic mix of ~55 % junk, ~35 % important, ~10 % grey.
+_KEYWORDS = [
+    # (keyword,  weight,  source_type)
+    ("ERROR",    20,  "system"),
+    ("WARN",     10,  "system"),
+    ("DEBUG",    10,  "system"),
+    ("FAULT",     5,  "system"),
+    ("CONFIRM",  15,  "person"),
+    ("AUDIT",    10,  "person"),
+    ("APPROVED", 10,  "person"),
+    ("NOTICE",    5,  "system"),
+    ("ALERT",     5,  "system"),
+    ("INFO",      5,  "system"),
+    ("TRANSFER",  5,  "person"),
+]
+
+_KW_LIST    = [k for k, w, _ in _KEYWORDS for _ in range(w)]
+_KW_SOURCE  = {k: s for k, _, s in _KEYWORDS}
+
+
+def _system_name() -> str:
+    """Generate a realistic mainframe system identifier."""
+    prefixes = ["SRV", "NODE", "PROC", "BATCH", "HOST", "CORE", "JOB", "SPOOL"]
+    zones    = ["MAIN", "DB", "NET", "AUTH", "TXN", "LEDGER", "DISK", "MEM"]
+    return f"{random.choice(prefixes)}-{random.choice(zones)}-{random.randint(1, 99):02d}"
+
+
+def generate_record(rec_id: int):
+    """Generate one complete record: (id, name, amount, log_text)."""
+    keyword = random.choice(_KW_LIST)
+    log_text = generate_log(keyword)
+
+    # system errors → system name;  financial logs → person name
+    if _KW_SOURCE[keyword] == "system":
+        name = _system_name()
     else:
-        return fake.name()
+        name = fake.name()
+
+    amount = random.randint(100, 9999)
+    return str(rec_id), name, amount, log_text
+
+
+# ---------------------------------------------------------------------------
+# CLI entry-point
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     print("Generating 50 AI-written log entries …\n")
 
     with open("legacy_mainframe.dat", "wb") as f:
         for i in range(50):
-            log = generate_log()
-            f.write(create_ebcdic_record(str(i), generate_source_name(),
-                                         random.randint(100, 9999), log))
+            rec_id, name, amount, log_text = generate_record(i)
+            f.write(create_ebcdic_record(rec_id, name, amount, log_text))
 
             if (i + 1) % 10 == 0:
                 print(f"  {i + 1}/50 records written …")

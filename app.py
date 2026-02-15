@@ -45,18 +45,12 @@ def load_pii_analyzer():
 classifier = load_classifier()
 pii_analyzer = load_pii_analyzer()
 
-# Candidate labels for zero-shot classification — the AI maps each log to one.
-CANDIDATE_LABELS = [
-    "system error or diagnostic noise",
-    "confirmed financial transaction",
-    "security alert or compliance review",
+# Binary zero-shot labels — the AI decides Green vs Red.
+# Yellow is NOT an AI label; it only appears when Presidio finds PII in a Red record.
+CLASS_LABELS = [
+    "important financial record",   # → Green
+    "system noise or junk log",     # → Red
 ]
-
-LABEL_TO_TIER = {
-    "system error or diagnostic noise":    "🔴 Red (Absolute ROT)",
-    "confirmed financial transaction":     "🟢 Green (Important)",
-    "security alert or compliance review": "🟡 Yellow (Quarantine)",
-}
 
 def build_summary(tier_df):
     """Builds a short human-readable summary of what's in each tier."""
@@ -64,19 +58,12 @@ def build_summary(tier_df):
     if n == 0:
         return "No records in this category."
 
+    parts = []
     pii_flags = 0
     if 'PII_Count' in tier_df.columns:
         pii_flags = int(tier_df['PII_Count'].sum())
-
-    # Count by AI-assigned label
-    parts = []
-    if 'AI_Label' in tier_df.columns:
-        for label in CANDIDATE_LABELS:
-            count = int((tier_df['AI_Label'] == label).sum())
-            if count:
-                parts.append(f"{count} {label}")
     if pii_flags:
-        parts.append(f"{pii_flags} PII flags")
+        parts.append(f"{pii_flags} PII detections")
 
     if parts:
         return f"{n} records — {', '.join(parts)}."
@@ -105,25 +92,34 @@ def make_zip(df, csv_name="quarantined_data.csv"):
     buf.seek(0)
     return buf.getvalue()
 
+
+def display_columns(df):
+    """Return a display-ready dataframe with clean column names."""
+    cols = [c for c in ["id", "name", "amount", "text", "Tier"] if c in df.columns]
+    out = df[cols].copy()
+    out = out.rename(columns={"name": "Source"})
+    return out
+
+
 # --- sidebar ---
 
 with st.sidebar:
     st.markdown(
-        "<div style='text-align:center; padding:1rem 0 0.5rem;'>"
-        "<span style='font-size:2.5rem;'>🌱</span><br>"
-        "<span style='font-size:1.4rem; font-weight:800; "
-        "background:linear-gradient(135deg,#66bb6a,#2e7d32); "
+        "<div style='text-align:center; padding:1.2rem 0 0.5rem;'>"
+        "<span style='font-size:2.8rem; filter:drop-shadow(0 0 12px rgba(76,175,80,0.3));'>🌱</span><br>"
+        "<span style='font-size:1.5rem; font-weight:900; "
+        "background:linear-gradient(135deg,#81c784,#66bb6a,#2e7d32); "
         "-webkit-background-clip:text; -webkit-text-fill-color:transparent;'>"
         "Eco-Vault</span><br>"
-        "<span style='font-size:0.75rem; opacity:0.45; letter-spacing:2px; "
-        "text-transform:uppercase;'>digital decarbonisation</span>"
+        "<span style='font-size:0.68rem; opacity:0.35; letter-spacing:3px; "
+        "text-transform:uppercase; font-weight:500;'>digital decarbonisation</span>"
         "</div>",
         unsafe_allow_html=True
     )
     st.markdown("")
     st.markdown("---")
 
-    # little progress tracker so the user knows where they are
+    # progress tracker
     step = 1
     if st.session_state.get("data") is not None:
         step = 2
@@ -133,24 +129,32 @@ with st.sidebar:
         step = 4
 
     steps = ["Upload data", "AI classification", "Review & approve", "Execute & download"]
-    for i, label in enumerate(steps, 1):
+    icons = ["📁", "🧠", "✅", "♻️"]
+    for i, (label, ic) in enumerate(zip(steps, icons), 1):
         if i < step:
-            icon = "✅"
+            mark = "✅"
+            cls = "sidebar-step"
         elif i == step:
-            icon = "▶️"
+            mark = ic
+            cls = "sidebar-step sidebar-step-active"
         else:
-            icon = "⬜"
-        opacity = "1" if i <= step else "0.4"
+            mark = "⬜"
+            cls = "sidebar-step"
+        opacity = "1" if i <= step else "0.35"
         st.markdown(
-            f"<div style='opacity:{opacity}; padding:3px 0; font-size:0.9rem;'>"
-            f"{icon} &nbsp; {label}</div>",
+            f"<div class='{cls}' style='opacity:{opacity};'>"
+            f"{mark} &nbsp; {label}</div>",
             unsafe_allow_html=True
         )
 
     st.markdown("---")
     st.markdown(
-        "<div style='opacity:0.4; font-size:0.75rem; text-align:center;'>"
-        "DistilBERT (Zero-Shot NLI) · Presidio<br>Celo Blockchain (Sepolia)"
+        "<div style='text-align:center; padding:0.5rem 0;'>"
+        "<span class='tech-chip'>distilgpt2</span>"
+        "<span class='tech-chip'>DistilBERT-NLI</span><br>"
+        "<span class='tech-chip'>Presidio</span>"
+        "<span class='tech-chip'>Celo L2</span>"
+        "<span class='tech-chip'>EBCDIC</span>"
         "</div>",
         unsafe_allow_html=True
     )
@@ -178,6 +182,47 @@ st.markdown(
     "</div>",
     unsafe_allow_html=True
 )
+
+# AI Pipeline Visualiser
+pipe_cols = st.columns([1, 0.2, 1, 0.2, 1, 0.2, 1])
+with pipe_cols[0]:
+    st.markdown(
+        "<div class='pipeline-box'>"
+        "<div class='pipeline-icon'>📼</div>"
+        "<div class='pipeline-label'>EBCDIC Decoder</div>"
+        "<div class='pipeline-desc'>cp037 + COMP-3</div>"
+        "</div>", unsafe_allow_html=True
+    )
+with pipe_cols[1]:
+    st.markdown("<div class='pipeline-arrow'>▸▸▸</div>", unsafe_allow_html=True)
+with pipe_cols[2]:
+    st.markdown(
+        "<div class='pipeline-box'>"
+        "<div class='pipeline-icon'>🧠</div>"
+        "<div class='pipeline-label'>DistilBERT-NLI</div>"
+        "<div class='pipeline-desc'>Zero-shot classify</div>"
+        "</div>", unsafe_allow_html=True
+    )
+with pipe_cols[3]:
+    st.markdown("<div class='pipeline-arrow'>▸▸▸</div>", unsafe_allow_html=True)
+with pipe_cols[4]:
+    st.markdown(
+        "<div class='pipeline-box'>"
+        "<div class='pipeline-icon'>🔍</div>"
+        "<div class='pipeline-label'>Presidio PII</div>"
+        "<div class='pipeline-desc'>Entity scanner</div>"
+        "</div>", unsafe_allow_html=True
+    )
+with pipe_cols[5]:
+    st.markdown("<div class='pipeline-arrow'>▸▸▸</div>", unsafe_allow_html=True)
+with pipe_cols[6]:
+    st.markdown(
+        "<div class='pipeline-box'>"
+        "<div class='pipeline-icon'>⛓️</div>"
+        "<div class='pipeline-label'>Celo L2</div>"
+        "<div class='pipeline-desc'>On-chain proof</div>"
+        "</div>", unsafe_allow_html=True
+    )
 
 st.markdown("<div class='section-divider'></div>", unsafe_allow_html=True)
 
@@ -210,43 +255,56 @@ if uploaded_file:
         "<span class='step-header'>AI Classification</span>",
         unsafe_allow_html=True
     )
-    st.caption("Each record gets scanned for PII (Presidio) and classified by zero-shot AI (DistilBERT-NLI), then sorted.")
-    st.markdown("")
+    st.caption("Zero-shot AI (DistilBERT-NLI) classifies each record → Green or Red. Then Presidio scans Red for PII → Yellow.")
+    st.markdown(
+        "<div style='display:flex; gap:8px; margin:0.5rem 0 1rem;'>"
+        "<span class='chain-badge'>"
+        "<span class='live-dot live-dot-green'></span>AI Pipeline Active</span>"
+        "</div>",
+        unsafe_allow_html=True
+    )
 
     if st.button("🚀 Run Analysis", use_container_width=False) or st.session_state.analysis_done:
 
         if not st.session_state.analysis_done:
             tiers = []
             pii_counts = []
-            ai_labels = []
             bar = st.progress(0)
 
             for i, row in df.iterrows():
                 txt = row["text"]
 
-                pii_hits = pii_analyzer.analyze(text=txt, entities=None, language="en")
-                pii_count = len(pii_hits)
-                has_pii = pii_count > 0
-
-                result = classifier(txt, candidate_labels=CANDIDATE_LABELS)
+                # --- STEP A: Zero-shot AI decides Green vs Red ---
+                result = classifier(txt, candidate_labels=CLASS_LABELS)
                 top_label = result["labels"][0]
                 top_score = result["scores"][0]
 
-                if has_pii:
-                    tier = "🟡 Yellow (Quarantine)"
-                elif top_score < 0.50:
-                    tier = "🟡 Yellow (Quarantine)"
+                if top_label == CLASS_LABELS[0] and top_score >= 0.50:
+                    tier = "🟢 Green (Important)"
+                    pii_count = 0
                 else:
-                    tier = LABEL_TO_TIER[top_label]
+                    # --- STEP B: Presidio scans Red for PII ---
+                    pii_hits = pii_analyzer.analyze(
+                        text=txt, entities=None, language="en"
+                    )
+                    pii_count = len(pii_hits)
+
+                    if pii_count > 0:
+                        tier = "🟡 Yellow (Quarantine)"
+                    else:
+                        tier = "🔴 Red (Absolute ROT)"
 
                 tiers.append(tier)
                 pii_counts.append(pii_count)
-                ai_labels.append(top_label)
                 bar.progress((i + 1) / len(df))
 
             st.session_state.data["Tier"] = tiers
             st.session_state.data["PII_Count"] = pii_counts
-            st.session_state.data["AI_Label"] = ai_labels
+
+            # Replace person names with system IDs for non-Green records
+            for idx in range(len(st.session_state.data)):
+                if "Green" not in tiers[idx]:
+                    st.session_state.data.at[idx, "name"] = f"SYSTEM-{idx + 1:03d}"
             st.session_state.analysis_done = True
             st.rerun()
 
@@ -264,51 +322,95 @@ if uploaded_file:
         # --- results dashboard ---
         st.markdown("")
 
-        # top row: pie chart on the left, metrics on the right
-        chart_col, spacer, metrics_col = st.columns([1.2, 0.1, 2])
+        # top row: donut + bar chart + metrics
+        chart_col, bar_col, metrics_col = st.columns([1, 1, 1.5])
 
         with chart_col:
             st.markdown(
-                "<div style='text-align:center; opacity:0.5; font-size:0.8rem; "
-                "margin-bottom:0.5rem; letter-spacing:1px; text-transform:uppercase;'>"
-                "Record Distribution</div>",
+                "<div style='text-align:center; opacity:0.45; font-size:0.75rem; "
+                "margin-bottom:0.5rem; letter-spacing:1.5px; text-transform:uppercase; "
+                "font-weight:600;'>Distribution</div>",
                 unsafe_allow_html=True
             )
             fig = go.Figure(data=[go.Pie(
-                labels=["Green (Keep)", "Yellow (Review)", "Red (Delete)"],
+                labels=["Green", "Yellow", "Red"],
                 values=[green_n, yellow_n, red_n],
-                hole=0.55,
-                marker=dict(colors=["#4caf50", "#ffc107", "#f44336"]),
+                hole=0.62,
+                marker=dict(
+                    colors=["#4caf50", "#ffc107", "#f44336"],
+                    line=dict(color="rgba(0,0,0,0.3)", width=2)
+                ),
                 textinfo="percent+value",
-                textfont=dict(size=13, color="white"),
+                textfont=dict(size=12, color="white", family="monospace"),
                 hovertemplate="<b>%{label}</b><br>%{value} records<br>%{percent}<extra></extra>",
             )])
             fig.update_layout(
                 showlegend=False,
                 paper_bgcolor="rgba(0,0,0,0)",
                 plot_bgcolor="rgba(0,0,0,0)",
-                margin=dict(t=10, b=10, l=10, r=10),
+                margin=dict(t=8, b=8, l=8, r=8),
                 height=220,
                 annotations=[dict(
-                    text=f"<b>{total_n}</b><br><span style='font-size:10px'>records</span>",
-                    x=0.5, y=0.5, font=dict(size=20, color="white"),
+                    text=f"<b>{total_n}</b><br><span style='font-size:9px; color:rgba(255,255,255,0.4);'>TOTAL</span>",
+                    x=0.5, y=0.5, font=dict(size=22, color="white"),
                     showarrow=False
                 )],
             )
             st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
+        with bar_col:
+            st.markdown(
+                "<div style='text-align:center; opacity:0.45; font-size:0.75rem; "
+                "margin-bottom:0.5rem; letter-spacing:1.5px; text-transform:uppercase; "
+                "font-weight:600;'>Breakdown</div>",
+                unsafe_allow_html=True
+            )
+            bar_fig = go.Figure(data=[go.Bar(
+                x=["Keep", "Review", "Delete"],
+                y=[green_n, yellow_n, red_n],
+                marker=dict(
+                    color=["#4caf50", "#ffc107", "#f44336"],
+                    line=dict(color="rgba(255,255,255,0.1)", width=1),
+                ),
+                text=[green_n, yellow_n, red_n],
+                textposition="outside",
+                textfont=dict(size=13, color="rgba(255,255,255,0.7)", family="monospace"),
+                hovertemplate="<b>%{x}</b>: %{y} records<extra></extra>",
+            )])
+            bar_fig.update_layout(
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="rgba(0,0,0,0)",
+                margin=dict(t=8, b=30, l=10, r=10),
+                height=220,
+                xaxis=dict(
+                    showgrid=False,
+                    color="rgba(255,255,255,0.4)",
+                    tickfont=dict(size=11)
+                ),
+                yaxis=dict(visible=False),
+                bargap=0.35,
+            )
+            st.plotly_chart(bar_fig, use_container_width=True, config={"displayModeBar": False})
+
         with metrics_col:
-            m1, m2, m3, m4 = st.columns(4)
+            st.markdown(
+                "<div style='text-align:center; opacity:0.45; font-size:0.75rem; "
+                "margin-bottom:0.5rem; letter-spacing:1.5px; text-transform:uppercase; "
+                "font-weight:600;'>Metrics</div>",
+                unsafe_allow_html=True
+            )
+            m1, m2 = st.columns(2)
             m1.metric("🟢 Keep", green_n)
             m2.metric("🟡 Review", yellow_n)
+            m3, m4 = st.columns(2)
             m3.metric("🔴 Delete", red_n)
             m4.metric("🌍 CO₂ Saved", f"{energy_saved:.3f} kg")
 
-            # show percentages as a little bonus
             if total_n > 0:
                 st.markdown(
-                    f"<div style='opacity:0.45; font-size:0.82rem; margin-top:0.3rem;'>"
-                    f"&nbsp; Keep {green_n/total_n*100:.0f}% · "
+                    f"<div style='opacity:0.35; font-size:0.78rem; margin-top:0.3rem; "
+                    f"text-align:center; font-family:monospace;'>"
+                    f"Keep {green_n/total_n*100:.0f}% · "
                     f"Review {yellow_n/total_n*100:.0f}% · "
                     f"Delete {red_n/total_n*100:.0f}%"
                     f"</div>",
@@ -321,36 +423,33 @@ if uploaded_file:
 
         # green
         st.markdown(
-            f"<div class='tier-card tier-green'>"
-            f"<div class='tier-label'>🟢 Green — Safe, Business-Critical</div>"
+            f"<div class='tier-card tier-green'>"            f"<div class='tier-count'>{green_n}</div>"            f"<div class='tier-label'>🟢 Green — Safe, Business-Critical</div>"
             f"<div class='tier-desc'>{build_summary(green_df)}</div>"
             f"</div>",
             unsafe_allow_html=True
         )
         with st.expander(f"📋 View {green_n} green records"):
-            st.dataframe(green_df, use_container_width=True, hide_index=True)
+            st.dataframe(display_columns(green_df), use_container_width=True, hide_index=True)
 
         # yellow
         st.markdown(
-            f"<div class='tier-card tier-yellow'>"
-            f"<div class='tier-label'>🟡 Yellow — Quarantined for Review</div>"
+            f"<div class='tier-card tier-yellow'>"            f"<div class='tier-count'>{yellow_n}</div>"            f"<div class='tier-label'>🟡 Yellow — Quarantined for Review</div>"
             f"<div class='tier-desc'>{build_summary(yellow_df)}</div>"
             f"</div>",
             unsafe_allow_html=True
         )
         with st.expander(f"📋 View {yellow_n} yellow records"):
-            st.dataframe(yellow_df, use_container_width=True, hide_index=True)
+            st.dataframe(display_columns(yellow_df), use_container_width=True, hide_index=True)
 
         # red
         st.markdown(
-            f"<div class='tier-card tier-red'>"
-            f"<div class='tier-label'>🔴 Red — Digital Waste</div>"
+            f"<div class='tier-card tier-red'>"            f"<div class='tier-count'>{red_n}</div>"            f"<div class='tier-label'>🔴 Red — Digital Waste</div>"
             f"<div class='tier-desc'>{build_summary(red_df)}</div>"
             f"</div>",
             unsafe_allow_html=True
         )
         with st.expander(f"📋 View {red_n} red records"):
-            st.dataframe(red_df, use_container_width=True, hide_index=True)
+            st.dataframe(display_columns(red_df), use_container_width=True, hide_index=True)
 
         # --- step 3: compliance ---
 
@@ -407,19 +506,19 @@ if uploaded_file:
                 # download section
                 st.markdown("")
                 st.markdown(
-                    "<div style='opacity:0.5; font-size:0.8rem; letter-spacing:1px; "
-                    "text-transform:uppercase; margin-bottom:0.8rem;'>Downloads</div>",
+                    "<div style='opacity:0.45; font-size:0.75rem; letter-spacing:1.5px; "
+                    "text-transform:uppercase; margin-bottom:1rem; font-weight:600; "
+                    "text-align:center;'>Downloads</div>",
                     unsafe_allow_html=True
                 )
                 dl1, dl2 = st.columns(2)
 
                 with dl1:
                     st.markdown(
-                        "<div class='glass-card' style='border-color:rgba(76,175,80,0.2); "
-                        "text-align:center; padding:16px;'>"
-                        "<div style='font-size:1.5rem;'>📄</div>"
-                        "<div style='font-weight:600; margin:4px 0;'>Green Data</div>"
-                        "<div style='opacity:0.5; font-size:0.8rem;'>Re-encoded mainframe .dat</div>"
+                        "<div class='dl-card dl-card-green'>"
+                        "<div style='font-size:2rem; margin-bottom:6px;'>📄</div>"
+                        "<div style='font-weight:700; margin:6px 0; font-size:1.05rem;'>Green Data</div>"
+                        "<div style='opacity:0.4; font-size:0.78rem;'>Re-encoded mainframe .dat</div>"
                         "</div>",
                         unsafe_allow_html=True
                     )
@@ -434,11 +533,10 @@ if uploaded_file:
                 with dl2:
                     if not yellow_df.empty:
                         st.markdown(
-                            "<div class='glass-card' style='border-color:rgba(255,193,7,0.2); "
-                            "text-align:center; padding:16px;'>"
-                            "<div style='font-size:1.5rem;'>🗜️</div>"
-                            "<div style='font-weight:600; margin:4px 0;'>Yellow Data</div>"
-                            "<div style='opacity:0.5; font-size:0.8rem;'>Quarantine archive .zip</div>"
+                            "<div class='dl-card dl-card-yellow'>"
+                            "<div style='font-size:2rem; margin-bottom:6px;'>🗜️</div>"
+                            "<div style='font-weight:700; margin:6px 0; font-size:1.05rem;'>Yellow Data</div>"
+                            "<div style='opacity:0.4; font-size:0.78rem;'>Quarantine archive .zip</div>"
                             "</div>",
                             unsafe_allow_html=True
                         )
@@ -451,11 +549,10 @@ if uploaded_file:
                         )
                     else:
                         st.markdown(
-                            "<div class='glass-card' style='text-align:center; padding:16px;'>"
-                            "<div style='font-size:1.5rem; opacity:0.3;'>📭</div>"
-                            "<div style='font-weight:600; margin:4px 0; opacity:0.5;'>"
-                            "No Yellow Data</div>"
-                            "<div style='opacity:0.3; font-size:0.8rem;'>Nothing to quarantine</div>"
+                            "<div class='dl-card' style='opacity:0.4;'>"
+                            "<div style='font-size:2rem; margin-bottom:6px;'>📭</div>"
+                            "<div style='font-weight:700; margin:6px 0; font-size:1.05rem;'>No Yellow Data</div>"
+                            "<div style='opacity:0.4; font-size:0.78rem;'>Nothing to quarantine</div>"
                             "</div>",
                             unsafe_allow_html=True
                         )
@@ -465,9 +562,12 @@ if uploaded_file:
                 st.markdown("")
                 st.markdown(
                     "<div class='glass-card' style='border-color:rgba(76,175,80,0.15);'>"
-                    "<div style='font-size:0.85rem; font-weight:600; margin-bottom:0.5rem;'>"
-                    "🔐 Blockchain Authentication</div>"
-                    "<div style='opacity:0.5; font-size:0.8rem; margin-bottom:0.8rem;'>"
+                    "<div style='display:flex; align-items:center; gap:10px; margin-bottom:0.6rem;'>"
+                    "<span style='font-size:1.3rem;'>🔐</span>"
+                    "<span style='font-size:0.95rem; font-weight:700;'>Blockchain Authentication</span>"
+                    "<span class='chain-badge' style='margin-left:auto;'>Celo Sepolia</span>"
+                    "</div>"
+                    "<div style='opacity:0.45; font-size:0.82rem; margin-bottom:0.8rem; line-height:1.6;'>"
                     "Your private key signs a zero-value transaction on Celo Sepolia. "
                     "The only cost is a tiny gas fee (fractions of a cent on testnet). "
                     "The key never leaves your browser.</div>"
