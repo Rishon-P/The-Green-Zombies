@@ -22,44 +22,80 @@ def create_ebcdic_record(rec_id, name, amount, log_text):
         + codecs.encode(f"{log_text:<50}", "cp037")
     )
 
-junk_logs = [
-    "DEBUG: System dump memory leak at 0x000",
-    "DEBUG: Null pointer dereference in module 7",
-    "ERROR: Retry timeout on batch job #4412",
-    "WARN: Disk cache overflow flushed segment 9",
-    "DEBUG: Heap allocation failed for buffer pool",
-    "ERROR: Connection pool exhausted srv-legacy-03",
-]
+_log_generator = None
 
-important_logs = [
-    "CONFIRM: Transaction verified for client",
-    "CONFIRM: Wire transfer approved by compliance",
-    "AUDIT: Quarterly balance reconciliation passed",
-    "CONFIRM: Loan disbursement completed account",
-    "AUDIT: KYC verification passed for applicant",
-]
+_FEW_SHOT = (
+    "Banking mainframe COBOL transaction log:\n"
+    ">> ERROR: disk I/O failure on drive 7\n"
+    ">> CONFIRM: wire transfer cleared\n"
+    ">> AUDIT: end-of-day reconciliation ok\n"
+    ">> WARN: thread pool near capacity\n"
+    ">>"
+)
 
-grey_area_logs = [
-    "NOTICE: Account flagged for manual review",
-    "WARN: Unusual login pattern detected for user",
-    "NOTICE: Compliance hold pending officer review",
-    "INFO: Record updated by system migration batch",
-    "WARN: Data format mismatch in legacy import",
-]
 
-print("Writing legacy_mainframe.dat ...")
+def _get_log_generator():
+    """Load distilgpt2 once, only when we actually need it."""
+    global _log_generator
+    if _log_generator is None:
+        from transformers import pipeline
+        print("Loading distilgpt2 (82 M params, energy-efficient) …")
+        _log_generator = pipeline("text-generation", model="distilgpt2")
+    return _log_generator
 
-with open("legacy_mainframe.dat", "wb") as f:
-    for i in range(50):
-        roll = random.random()
-        if roll < 0.35:
-            log = random.choice(junk_logs)
-        elif roll < 0.65:
-            log = random.choice(important_logs)
-        else:
-            log = random.choice(grey_area_logs)
 
-        f.write(create_ebcdic_record(str(i), fake.name(),
-                                     random.randint(100, 9999), log))
+def generate_log() -> str:
+    """
+    AI generates a complete log entry from scratch.
+    Few-shot prompting teaches the format; all content is novel.
+    """
+    gen = _get_log_generator()
+    result = gen(
+        _FEW_SHOT,
+        max_new_tokens=18,
+        do_sample=True,
+        temperature=0.85,
+        top_k=40,
+        repetition_penalty=1.3,
+        pad_token_id=50256,
+    )
+    full = result[0]["generated_text"]
+    # everything after the prompt is what the AI invented
+    new_text = full[len(_FEW_SHOT):].strip()
+    # take only the first generated line
+    new_text = new_text.split("\n")[0].strip()
+    # strip any leading ">>" the model might echo
+    if new_text.startswith(">>"):
+        new_text = new_text[2:].strip()
+    # keep only printable ASCII (EBCDIC cp037 safe)
+    new_text = "".join(c for c in new_text if 32 <= ord(c) < 127)
+    return new_text[:50] if new_text else "LOG: system event recorded"
 
-print("Done — 50 records ready.")
+
+def generate_source_name() -> str:
+    """
+    Produce a realistic source name for the record.
+    ~50 % system identifiers (for error/debug logs),
+    ~50 % person names (for transaction/audit logs).
+    """
+    if random.random() < 0.5:
+        # system / server / process identifier
+        prefixes = ["SRV", "NODE", "PROC", "BATCH", "HOST", "CORE"]
+        zones = ["MAIN", "DB", "NET", "AUTH", "TXN", "LEDGER"]
+        return f"{random.choice(prefixes)}-{random.choice(zones)}-{random.randint(1, 99):02d}"
+    else:
+        return fake.name()
+
+if __name__ == "__main__":
+    print("Generating 50 AI-written log entries …\n")
+
+    with open("legacy_mainframe.dat", "wb") as f:
+        for i in range(50):
+            log = generate_log()
+            f.write(create_ebcdic_record(str(i), generate_source_name(),
+                                         random.randint(100, 9999), log))
+
+            if (i + 1) % 10 == 0:
+                print(f"  {i + 1}/50 records written …")
+
+    print("\nDone — 50 AI-generated records ready.")

@@ -34,8 +34,8 @@ w3 = Web3(Web3.HTTPProvider(CELO_RPC))
 @st.cache_resource
 def load_classifier():
     return pipeline(
-        "text-classification",
-        model="distilbert-base-uncased-finetuned-sst-2-english"
+        "zero-shot-classification",
+        model="typeform/distilbert-base-uncased-mnli"
     )
 
 @st.cache_resource
@@ -45,28 +45,36 @@ def load_pii_analyzer():
 classifier = load_classifier()
 pii_analyzer = load_pii_analyzer()
 
+# Candidate labels for zero-shot classification — the AI maps each log to one.
+CANDIDATE_LABELS = [
+    "system error or diagnostic noise",
+    "confirmed financial transaction",
+    "security alert or compliance review",
+]
+
+LABEL_TO_TIER = {
+    "system error or diagnostic noise":    "🔴 Red (Absolute ROT)",
+    "confirmed financial transaction":     "🟢 Green (Important)",
+    "security alert or compliance review": "🟡 Yellow (Quarantine)",
+}
+
 def build_summary(tier_df):
     """Builds a short human-readable summary of what's in each tier."""
     n = len(tier_df)
     if n == 0:
         return "No records in this category."
 
-    # count different types of log entries
-    sys_logs = int(tier_df['text'].str.contains("DEBUG|ERROR|WARN", case=False).sum())
-    confirms = int(tier_df['text'].str.contains("CONFIRM|AUDIT", case=False).sum())
-    notices = int(tier_df['text'].str.contains("NOTICE|INFO", case=False).sum())
-
     pii_flags = 0
     if 'PII_Count' in tier_df.columns:
         pii_flags = int(tier_df['PII_Count'].sum())
 
+    # Count by AI-assigned label
     parts = []
-    if sys_logs:
-        parts.append(f"{sys_logs} system/error logs")
-    if confirms:
-        parts.append(f"{confirms} confirmed transactions")
-    if notices:
-        parts.append(f"{notices} notices/info entries")
+    if 'AI_Label' in tier_df.columns:
+        for label in CANDIDATE_LABELS:
+            count = int((tier_df['AI_Label'] == label).sum())
+            if count:
+                parts.append(f"{count} {label}")
     if pii_flags:
         parts.append(f"{pii_flags} PII flags")
 
@@ -142,7 +150,7 @@ with st.sidebar:
     st.markdown("---")
     st.markdown(
         "<div style='opacity:0.4; font-size:0.75rem; text-align:center;'>"
-        "DistilBERT · Microsoft Presidio<br>Celo Blockchain (Sepolia)"
+        "DistilBERT (Zero-Shot NLI) · Presidio<br>Celo Blockchain (Sepolia)"
         "</div>",
         unsafe_allow_html=True
     )
@@ -202,7 +210,7 @@ if uploaded_file:
         "<span class='step-header'>AI Classification</span>",
         unsafe_allow_html=True
     )
-    st.caption("Each record gets scanned for PII (Presidio) and sentiment (DistilBERT), then sorted.")
+    st.caption("Each record gets scanned for PII (Presidio) and classified by zero-shot AI (DistilBERT-NLI), then sorted.")
     st.markdown("")
 
     if st.button("🚀 Run Analysis", use_container_width=False) or st.session_state.analysis_done:
@@ -210,6 +218,7 @@ if uploaded_file:
         if not st.session_state.analysis_done:
             tiers = []
             pii_counts = []
+            ai_labels = []
             bar = st.progress(0)
 
             for i, row in df.iterrows():
@@ -219,23 +228,25 @@ if uploaded_file:
                 pii_count = len(pii_hits)
                 has_pii = pii_count > 0
 
-                result = classifier(txt)[0]
-                is_negative = result["label"] == "NEGATIVE"
-                confidence = result["score"]
+                result = classifier(txt, candidate_labels=CANDIDATE_LABELS)
+                top_label = result["labels"][0]
+                top_score = result["scores"][0]
 
-                if is_negative and not has_pii and confidence >= 0.85:
-                    tier = "🔴 Red (Absolute ROT)"
-                elif has_pii or confidence < 0.85:
+                if has_pii:
+                    tier = "🟡 Yellow (Quarantine)"
+                elif top_score < 0.50:
                     tier = "🟡 Yellow (Quarantine)"
                 else:
-                    tier = "🟢 Green (Important)"
+                    tier = LABEL_TO_TIER[top_label]
 
                 tiers.append(tier)
                 pii_counts.append(pii_count)
+                ai_labels.append(top_label)
                 bar.progress((i + 1) / len(df))
 
             st.session_state.data["Tier"] = tiers
             st.session_state.data["PII_Count"] = pii_counts
+            st.session_state.data["AI_Label"] = ai_labels
             st.session_state.analysis_done = True
             st.rerun()
 
