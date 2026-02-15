@@ -4,15 +4,7 @@ from faker import Faker
 
 fake = Faker()
 
-
 def pack_comp3(number, width=3):
-    """Turn a Python int into COMP-3 packed-decimal bytes.
-
-    COMP-3 squeezes two digits into each byte; the very last nibble
-    stores the sign (C = positive, D = negative).  We zero-pad so the
-    output is *always* exactly `width` bytes — otherwise the reader's
-    fixed-length slicing breaks.
-    """
     digits = str(abs(number)).zfill(width * 2 - 1)
     packed = bytearray()
     for i in range(0, len(digits) - 1, 2):
@@ -23,14 +15,6 @@ def pack_comp3(number, width=3):
 
 
 def create_ebcdic_record(rec_id, name, amount, log_text):
-    """Build one 83-byte record in mainframe format.
-
-    Layout (the "copybook"):
-      ID   — 10 bytes, EBCDIC text
-      Name — 20 bytes, EBCDIC text
-      Amt  —  3 bytes, COMP-3 packed decimal
-      Log  — 50 bytes, EBCDIC text
-    """
     return (
         codecs.encode(f"{rec_id:<10}",   "cp037")
         + codecs.encode(f"{name:<20}",   "cp037")
@@ -63,8 +47,6 @@ grey_area_logs = [
     "WARN: Data format mismatch in legacy import",
 ]
 
-
-# Write 50 records — roughly 35% junk, 30% important, 35% grey area
 print("Writing legacy_mainframe.dat ...")
 
 with open("legacy_mainframe.dat", "wb") as f:

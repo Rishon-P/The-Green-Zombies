@@ -2,6 +2,7 @@ import io
 import zipfile
 import hashlib
 import json
+import pathlib
 import streamlit as st
 import pandas as pd
 from web3 import Web3
@@ -10,6 +11,18 @@ from presidio_analyzer import AnalyzerEngine
 
 from reader import parse_mainframe_file
 from generator import pack_comp3, create_ebcdic_record
+import plotly.graph_objects as go
+
+st.set_page_config(
+    page_title="Eco-Vault",
+    page_icon="🌱",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+css_path = pathlib.Path(__file__).parent / "style.css"
+if css_path.exists():
+    st.markdown(f"<style>{css_path.read_text()}</style>", unsafe_allow_html=True)
 
 # talking to celo sepolia testnet
 CELO_RPC = "https://forno.celo-sepolia.celo-testnet.org"
@@ -84,9 +97,62 @@ def make_zip(df, csv_name="quarantined_data.csv"):
     buf.seek(0)
     return buf.getvalue()
 
-st.title("🌱 Zero-Rot")
+# --- sidebar ---
 
-# need to keep data around between streamlit reruns
+with st.sidebar:
+    st.markdown(
+        "<div style='text-align:center; padding:1rem 0 0.5rem;'>"
+        "<span style='font-size:2.5rem;'>🌱</span><br>"
+        "<span style='font-size:1.4rem; font-weight:800; "
+        "background:linear-gradient(135deg,#66bb6a,#2e7d32); "
+        "-webkit-background-clip:text; -webkit-text-fill-color:transparent;'>"
+        "Eco-Vault</span><br>"
+        "<span style='font-size:0.75rem; opacity:0.45; letter-spacing:2px; "
+        "text-transform:uppercase;'>digital decarbonisation</span>"
+        "</div>",
+        unsafe_allow_html=True
+    )
+    st.markdown("")
+    st.markdown("---")
+
+    # little progress tracker so the user knows where they are
+    step = 1
+    if st.session_state.get("data") is not None:
+        step = 2
+    if st.session_state.get("analysis_done"):
+        step = 3
+    if st.session_state.get("tx_hash"):
+        step = 4
+
+    steps = ["Upload data", "AI classification", "Review & approve", "Execute & download"]
+    for i, label in enumerate(steps, 1):
+        if i < step:
+            icon = "✅"
+        elif i == step:
+            icon = "▶️"
+        else:
+            icon = "⬜"
+        opacity = "1" if i <= step else "0.4"
+        st.markdown(
+            f"<div style='opacity:{opacity}; padding:3px 0; font-size:0.9rem;'>"
+            f"{icon} &nbsp; {label}</div>",
+            unsafe_allow_html=True
+        )
+
+    st.markdown("---")
+    st.markdown(
+        "<div style='opacity:0.4; font-size:0.75rem; text-align:center;'>"
+        "DistilBERT · Microsoft Presidio<br>Celo Blockchain (Sepolia)"
+        "</div>",
+        unsafe_allow_html=True
+    )
+    st.markdown("")
+    if st.button("🔄 Start Over", use_container_width=True):
+        st.session_state.clear()
+        st.rerun()
+
+# --- session state ---
+
 if "data" not in st.session_state:
     st.session_state.data = None
 if "analysis_done" not in st.session_state:
@@ -94,8 +160,31 @@ if "analysis_done" not in st.session_state:
 if "tx_hash" not in st.session_state:
     st.session_state.tx_hash = None
 
-st.header("📂 Step 1 — Upload Legacy Data")
-uploaded_file = st.file_uploader("Upload a mainframe dump (.dat)", type="dat")
+# --- hero ---
+
+st.markdown(
+    "<div class='hero-wrapper'>"
+    "<div class='hero-icon'>🌱</div><br>"
+    "<div class='hero-title'>Eco-Vault</div>"
+    "<div class='hero-subtitle'>Classify · Quarantine · Delete · Prove</div>"
+    "</div>",
+    unsafe_allow_html=True
+)
+
+st.markdown("<div class='section-divider'></div>", unsafe_allow_html=True)
+
+# ------ step 1: upload ------
+
+st.markdown(
+    "<span class='step-badge'>STEP 1</span>"
+    "<span class='step-header'>Upload Legacy Data</span>",
+    unsafe_allow_html=True
+)
+st.caption("Drop in a mainframe dump and we'll decode the EBCDIC + COMP-3 for you.")
+st.markdown("")
+uploaded_file = st.file_uploader(
+    "Upload a mainframe dump (.dat)", type="dat", label_visibility="collapsed"
+)
 
 if uploaded_file:
     if st.session_state.data is None:
@@ -106,9 +195,17 @@ if uploaded_file:
         st.session_state.data = pd.DataFrame(raw_records)
 
     df = st.session_state.data
-    st.header("🧠 Step 2 — AI Classification")
 
-    if st.button("🚀 Run Analysis") or st.session_state.analysis_done:
+    st.markdown("<div class='section-divider'></div>", unsafe_allow_html=True)
+    st.markdown(
+        "<span class='step-badge'>STEP 2</span>"
+        "<span class='step-header'>AI Classification</span>",
+        unsafe_allow_html=True
+    )
+    st.caption("Each record gets scanned for PII (Presidio) and sentiment (DistilBERT), then sorted.")
+    st.markdown("")
+
+    if st.button("🚀 Run Analysis", use_container_width=False) or st.session_state.analysis_done:
 
         if not st.session_state.analysis_done:
             tiers = []
@@ -150,74 +247,228 @@ if uploaded_file:
         green_n = len(green_df)
         yellow_n = len(yellow_df)
         red_n = len(red_df)
-        energy_saved = red_n * 0.005  # rough estimate of carbon savings
+        total_n = green_n + yellow_n + red_n
+        energy_saved = red_n * 0.005
 
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("🟢 Keep", green_n)
-        c2.metric("🟡 Review", yellow_n)
-        c3.metric("🔴 Delete", red_n)
-        c4.metric("Carbon Savings", f"{energy_saved:.2f} kgCO2e")
+        # --- results dashboard ---
+        st.markdown("")
 
-        # green records
-        st.subheader("🟢 Green — Safe, Business-Critical")
-        st.success(build_summary(green_df))
-        st.dataframe(green_df, use_container_width=True)
+        # top row: pie chart on the left, metrics on the right
+        chart_col, spacer, metrics_col = st.columns([1.2, 0.1, 2])
 
-        # yellow records
-        st.subheader("🟡 Yellow — Quarantined for Human Review")
-        st.warning(build_summary(yellow_df))
-        st.dataframe(yellow_df, use_container_width=True)
+        with chart_col:
+            st.markdown(
+                "<div style='text-align:center; opacity:0.5; font-size:0.8rem; "
+                "margin-bottom:0.5rem; letter-spacing:1px; text-transform:uppercase;'>"
+                "Record Distribution</div>",
+                unsafe_allow_html=True
+            )
+            fig = go.Figure(data=[go.Pie(
+                labels=["Green (Keep)", "Yellow (Review)", "Red (Delete)"],
+                values=[green_n, yellow_n, red_n],
+                hole=0.55,
+                marker=dict(colors=["#4caf50", "#ffc107", "#f44336"]),
+                textinfo="percent+value",
+                textfont=dict(size=13, color="white"),
+                hovertemplate="<b>%{label}</b><br>%{value} records<br>%{percent}<extra></extra>",
+            )])
+            fig.update_layout(
+                showlegend=False,
+                paper_bgcolor="rgba(0,0,0,0)",
+                plot_bgcolor="rgba(0,0,0,0)",
+                margin=dict(t=10, b=10, l=10, r=10),
+                height=220,
+                annotations=[dict(
+                    text=f"<b>{total_n}</b><br><span style='font-size:10px'>records</span>",
+                    x=0.5, y=0.5, font=dict(size=20, color="white"),
+                    showarrow=False
+                )],
+            )
+            st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
-        # red records
-        st.subheader("🔴 Red — Digital Waste")
-        st.error(build_summary(red_df))
-        st.dataframe(red_df, use_container_width=True)
-        st.header("🛡️ Step 3 — Compliance Sign-off")
+        with metrics_col:
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("🟢 Keep", green_n)
+            m2.metric("🟡 Review", yellow_n)
+            m3.metric("🔴 Delete", red_n)
+            m4.metric("🌍 CO₂ Saved", f"{energy_saved:.3f} kg")
 
+            # show percentages as a little bonus
+            if total_n > 0:
+                st.markdown(
+                    f"<div style='opacity:0.45; font-size:0.82rem; margin-top:0.3rem;'>"
+                    f"&nbsp; Keep {green_n/total_n*100:.0f}% · "
+                    f"Review {yellow_n/total_n*100:.0f}% · "
+                    f"Delete {red_n/total_n*100:.0f}%"
+                    f"</div>",
+                    unsafe_allow_html=True
+                )
+
+        st.markdown("")
+
+        # --- tier cards ---
+
+        # green
+        st.markdown(
+            f"<div class='tier-card tier-green'>"
+            f"<div class='tier-label'>🟢 Green — Safe, Business-Critical</div>"
+            f"<div class='tier-desc'>{build_summary(green_df)}</div>"
+            f"</div>",
+            unsafe_allow_html=True
+        )
+        with st.expander(f"📋 View {green_n} green records"):
+            st.dataframe(green_df, use_container_width=True, hide_index=True)
+
+        # yellow
+        st.markdown(
+            f"<div class='tier-card tier-yellow'>"
+            f"<div class='tier-label'>🟡 Yellow — Quarantined for Review</div>"
+            f"<div class='tier-desc'>{build_summary(yellow_df)}</div>"
+            f"</div>",
+            unsafe_allow_html=True
+        )
+        with st.expander(f"📋 View {yellow_n} yellow records"):
+            st.dataframe(yellow_df, use_container_width=True, hide_index=True)
+
+        # red
+        st.markdown(
+            f"<div class='tier-card tier-red'>"
+            f"<div class='tier-label'>🔴 Red — Digital Waste</div>"
+            f"<div class='tier-desc'>{build_summary(red_df)}</div>"
+            f"</div>",
+            unsafe_allow_html=True
+        )
+        with st.expander(f"📋 View {red_n} red records"):
+            st.dataframe(red_df, use_container_width=True, hide_index=True)
+
+        # --- step 3: compliance ---
+
+        st.markdown("<div class='section-divider'></div>", unsafe_allow_html=True)
+        st.markdown(
+            "<span class='step-badge'>STEP 3</span>"
+            "<span class='step-header'>Compliance Sign-off</span>",
+            unsafe_allow_html=True
+        )
+
+        st.markdown("")
         approved = st.checkbox(
-            "I, as a human compliance officer, have reviewed the Red and "
-            "Yellow data summaries and authorize this action."
+            "I confirm I have reviewed the classified data above and authorise "
+            "deletion of Red records with blockchain proof."
         )
 
         if not approved:
-            st.info("Review the tables above and tick the box to continue.")
+            st.info("☝️ Review the tier cards above, then tick the checkbox to proceed.")
 
         else:
-            st.header("⚡ Step 4 — Execute & Download")
+            st.markdown("<div class='section-divider'></div>", unsafe_allow_html=True)
+            st.markdown(
+                "<span class='step-badge'>STEP 4</span>"
+                "<span class='step-header'>Execute & Download</span>",
+                unsafe_allow_html=True
+            )
 
             if st.session_state.tx_hash:
-                # already done — show results
                 st.balloons()
-                st.success(
-                    f"Red data deleted & logged on-chain!  "
-                    f"Carbon savings: {energy_saved:.4f} kgCO2e"
-                )
+
+                # big success banner
                 st.markdown(
-                    f"### 📜 [View proof on Celo Explorer]"
-                    f"({EXPLORER}/tx/{st.session_state.tx_hash})"
+                    "<div class='glass-card' style='text-align:center; "
+                    "border-color:rgba(76,175,80,0.3);'>"
+                    "<div style='font-size:2.5rem; margin-bottom:0.3rem;'>✅</div>"
+                    "<div style='font-size:1.3rem; font-weight:700; color:#66bb6a;'>"
+                    "Deletion Complete & Logged On-Chain</div>"
+                    f"<div style='opacity:0.6; margin-top:0.4rem;'>"
+                    f"{red_n} records deleted · {energy_saved:.4f} kg CO₂e saved</div>"
+                    "</div>",
+                    unsafe_allow_html=True
                 )
 
-                # download the green data re-encoded as .dat
-                st.subheader("📥 Green Data — Modernised .dat")
-                st.download_button(
-                    "⬇️ Download Green Data (.dat)",
-                    dataframe_to_dat(green_df),
-                    "eco_vault_green_clean.dat",
-                    "application/octet-stream",
+                # explorer link
+                st.markdown(
+                    f"<div style='text-align:center; margin:1rem 0;'>"
+                    f"<a href='{EXPLORER}/tx/{st.session_state.tx_hash}' target='_blank' "
+                    f"style='color:#66bb6a; text-decoration:none; font-weight:600; "
+                    f"font-size:1rem;'>"
+                    f"📜 View proof on Celo Explorer →</a></div>",
+                    unsafe_allow_html=True
                 )
 
-                # and the yellow data goes into a zip
-                if not yellow_df.empty:
-                    st.subheader("📥 Yellow Data — Quarantine Archive")
+                # download section
+                st.markdown("")
+                st.markdown(
+                    "<div style='opacity:0.5; font-size:0.8rem; letter-spacing:1px; "
+                    "text-transform:uppercase; margin-bottom:0.8rem;'>Downloads</div>",
+                    unsafe_allow_html=True
+                )
+                dl1, dl2 = st.columns(2)
+
+                with dl1:
+                    st.markdown(
+                        "<div class='glass-card' style='border-color:rgba(76,175,80,0.2); "
+                        "text-align:center; padding:16px;'>"
+                        "<div style='font-size:1.5rem;'>📄</div>"
+                        "<div style='font-weight:600; margin:4px 0;'>Green Data</div>"
+                        "<div style='opacity:0.5; font-size:0.8rem;'>Re-encoded mainframe .dat</div>"
+                        "</div>",
+                        unsafe_allow_html=True
+                    )
                     st.download_button(
-                        "⬇️ Download Yellow Data (.zip)",
-                        make_zip(yellow_df, "quarantined_yellow.csv"),
-                        "eco_vault_yellow_quarantine.zip",
-                        "application/zip",
+                        "⬇️ Download .dat",
+                        dataframe_to_dat(green_df),
+                        "eco_vault_green_clean.dat",
+                        "application/octet-stream",
+                        use_container_width=True,
                     )
 
+                with dl2:
+                    if not yellow_df.empty:
+                        st.markdown(
+                            "<div class='glass-card' style='border-color:rgba(255,193,7,0.2); "
+                            "text-align:center; padding:16px;'>"
+                            "<div style='font-size:1.5rem;'>🗜️</div>"
+                            "<div style='font-weight:600; margin:4px 0;'>Yellow Data</div>"
+                            "<div style='opacity:0.5; font-size:0.8rem;'>Quarantine archive .zip</div>"
+                            "</div>",
+                            unsafe_allow_html=True
+                        )
+                        st.download_button(
+                            "⬇️ Download .zip",
+                            make_zip(yellow_df, "quarantined_yellow.csv"),
+                            "eco_vault_yellow_quarantine.zip",
+                            "application/zip",
+                            use_container_width=True,
+                        )
+                    else:
+                        st.markdown(
+                            "<div class='glass-card' style='text-align:center; padding:16px;'>"
+                            "<div style='font-size:1.5rem; opacity:0.3;'>📭</div>"
+                            "<div style='font-weight:600; margin:4px 0; opacity:0.5;'>"
+                            "No Yellow Data</div>"
+                            "<div style='opacity:0.3; font-size:0.8rem;'>Nothing to quarantine</div>"
+                            "</div>",
+                            unsafe_allow_html=True
+                        )
+
             else:
-                private_key = st.text_input("Celo Private Key", type="password")
+                # haven't fired the tx yet — show the key input
+                st.markdown("")
+                st.markdown(
+                    "<div class='glass-card' style='border-color:rgba(76,175,80,0.15);'>"
+                    "<div style='font-size:0.85rem; font-weight:600; margin-bottom:0.5rem;'>"
+                    "🔐 Blockchain Authentication</div>"
+                    "<div style='opacity:0.5; font-size:0.8rem; margin-bottom:0.8rem;'>"
+                    "Your private key signs a zero-value transaction on Celo Sepolia. "
+                    "The only cost is a tiny gas fee (fractions of a cent on testnet). "
+                    "The key never leaves your browser.</div>"
+                    "</div>",
+                    unsafe_allow_html=True
+                )
+
+                private_key = st.text_input(
+                    "Celo Wallet Private Key",
+                    type="password",
+                    placeholder="Paste your private key here…"
+                )
 
                 if st.button("♻️ Delete Red & Mint Proof") and private_key:
                     # throw away the red rows
@@ -260,7 +511,4 @@ if uploaded_file:
                     except Exception as e:
                         st.error(f"Blockchain error: {e}")
 
-# reset button in the sidebar
-if st.sidebar.button("Reset"):
-    st.session_state.clear()
-    st.rerun()
+# (reset button is in the sidebar above)
