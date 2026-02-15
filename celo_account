@@ -1,0 +1,23 @@
+Using eth path (m/44'/60'/0') for derivation. This used to default to 44'/52752'/0'/0 but changed in version 10.0.0. use "config:set --derivationPath <path>" to set your preferred default
+
+mnemonic: express spike farm media pulse swear slow globe animal welcome describe tomato trophy wedding oil plate detect more rough flower fitness seven champion myth
+derivationPath: m/44'/60'/0'/0/0
+privateKey: 717b4ee0d92bc5d97a0422717d782f7114f302ee5aab3e33d30f76ed1b955be7
+publicKey: 03e2f23bcbfe8a422bc9066d421a15fe663c4f149c830ed439040fb8a029e6b1bf
+address: 0xDbC3be871797E85797227bF518C79341E2f85B75
+
+This is not being stored anywhere. Save the mnemonic somewhere to use this account at a later point.
+
+
+celocli is now gathering anonymous usage statistics.
+
+None of the data being collected is personally identifiable and no flags or arguments are being stored nor transmitted.
+
+Data being reported is:
+  - command (for example network:info)
+  - celocli version (for example 5.2.3)
+  - success status (true/false)
+
+If you would like to opt out of this data collection, you can do so by running:
+
+celocli config:set --telemetry 0

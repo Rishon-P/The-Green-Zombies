@@ -1,103 +1,83 @@
-"""Generate a legacy mainframe data file with EBCDIC encoding and COMP-3 binary format.
-
-This script creates a binary file containing mixed transaction records, simulating
-the format commonly found on legacy IBM mainframe systems.
-"""
-
 import random
 import codecs
 from faker import Faker
 
-# Initialize faker for generating realistic names
 fake = Faker()
 
 
-def pack_comp3(number):
-    """Pack a number into IBM COMP-3 format (Packed Decimal).
-    
-    COMP-3 is a mainframe storage format where each decimal digit is stored in a nibble (4 bits),
-    with a sign indicator in the last nibble (0xC for positive, 0xD for negative).
-    
-    Args:
-        number: Integer value to pack
-        
-    Returns:
-        bytearray: The packed binary representation
+def pack_comp3(number, width=3):
+    """Turn a Python int into COMP-3 packed-decimal bytes.
+
+    COMP-3 squeezes two digits into each byte; the very last nibble
+    stores the sign (C = positive, D = negative).  We zero-pad so the
+    output is *always* exactly `width` bytes — otherwise the reader's
+    fixed-length slicing breaks.
     """
-    # Convert number to string digits, padded to 5 digits (fills 3 bytes with sign nibble)
-    digit_string = str(abs(number)).zfill(5)
-
-    # Pack pairs of digits into bytes: '123' -> 0x12, 0x3C
-    # Each byte contains two decimal digits in hexadecimal form
+    digits = str(abs(number)).zfill(width * 2 - 1)
     packed = bytearray()
-    for i in range(0, len(digit_string) - 1, 2):
-        # Combine two adjacent digits and convert hex string to byte value
-        byte_value = int(digit_string[i] + digit_string[i+1], 16)
-        packed.append(byte_value)
-
-    # Append the sign nibble: 0xC (positive) or 0xD (negative)
-    # Format: last_digit=4 high bits, sign=4 low bits
-    last_digit = int(digit_string[-1])
-    sign_nibble = 0xC if number >= 0 else 0xD  # C=positive, D=negative
-    last_byte = (last_digit << 4) | sign_nibble  # Shift digit left 4 bits and OR with sign
-    packed.append(last_byte)
-
+    for i in range(0, len(digits) - 1, 2):
+        packed.append(int(digits[i] + digits[i + 1], 16))
+    sign = 0xC if number >= 0 else 0xD
+    packed.append((int(digits[-1]) << 4) | sign)
     return packed
 
-def create_ebcdic_record(record_id, name, amount, log_text):
-    """Create a binary transaction record in legacy mainframe format.
-    
-    Combines multiple fields with different encodings:
-    - ID and name fields use EBCDIC (Extended Binary Coded Decimal Interchange Code)
-    - Amount field uses COMP-3 (packed decimal binary format)
-    - Log message field uses EBCDIC
-    
-    Args:
-        record_id: Transaction ID (converted to 10-char string)
-        name: Customer/entity name (padded to 20 chars)
-        amount: Transaction amount in cents/smallest unit (packed as COMP-3)
-        log_text: Transaction log/status message (padded to 50 chars)
-        
-    Returns:
-        bytes: Complete EBCDIC/binary record concatenated together
+
+def create_ebcdic_record(rec_id, name, amount, log_text):
+    """Build one 83-byte record in mainframe format.
+
+    Layout (the "copybook"):
+      ID   — 10 bytes, EBCDIC text
+      Name — 20 bytes, EBCDIC text
+      Amt  —  3 bytes, COMP-3 packed decimal
+      Log  — 50 bytes, EBCDIC text
     """
-    # Convert and pad ID: text to EBCDIC encoding, left-aligned in 10 chars
-    id_bytes = codecs.encode(f"{record_id:<10}"[:10], "cp037")
+    return (
+        codecs.encode(f"{rec_id:<10}",   "cp037")
+        + codecs.encode(f"{name:<20}",   "cp037")
+        + pack_comp3(amount)
+        + codecs.encode(f"{log_text:<50}", "cp037")
+    )
 
-    # Convert and pad name: text to EBCDIC encoding, left-aligned in 20 chars
-    name_bytes = codecs.encode(f"{name:<20}"[:20], "cp037")
+junk_logs = [
+    "DEBUG: System dump memory leak at 0x000",
+    "DEBUG: Null pointer dereference in module 7",
+    "ERROR: Retry timeout on batch job #4412",
+    "WARN: Disk cache overflow flushed segment 9",
+    "DEBUG: Heap allocation failed for buffer pool",
+    "ERROR: Connection pool exhausted srv-legacy-03",
+]
 
-    # Convert amount: integer to packed decimal (COMP-3 binary format)
-    amount_bytes = pack_comp3(amount)
+important_logs = [
+    "CONFIRM: Transaction verified for client",
+    "CONFIRM: Wire transfer approved by compliance",
+    "AUDIT: Quarterly balance reconciliation passed",
+    "CONFIRM: Loan disbursement completed account",
+    "AUDIT: KYC verification passed for applicant",
+]
 
-    # Convert and pad log message: text to EBCDIC encoding, left-aligned in 50 chars
-    log_bytes = codecs.encode(f"{log_text:<50}"[:50], "cp037")
+grey_area_logs = [
+    "NOTICE: Account flagged for manual review",
+    "WARN: Unusual login pattern detected for user",
+    "NOTICE: Compliance hold pending officer review",
+    "INFO: Record updated by system migration batch",
+    "WARN: Data format mismatch in legacy import",
+]
 
-    # Concatenate all fields in order
-    return id_bytes + name_bytes + amount_bytes + log_bytes
 
-if __name__ == "__main__":
-    print("Generating 'legacy_mainframe.dat'...")
-    
-    # Create output file in binary write mode
-    with open("legacy_mainframe.dat", "wb") as output_file:
-        # Generate 50 sample transaction records
-        for record_index in range(50):
-            # Randomly select log message: mix of debug and confirmation messages
-            if random.random() > 0.5:
-                transaction_log = "DEBUG: System dump memory leak at 0x000"
-            else:
-                transaction_log = "CONFIRM: Transaction verified for client"
-            
-            # Build the binary record with random data
-            record = create_ebcdic_record(
-                record_id=str(record_index),
-                name=fake.name(),
-                amount=random.randint(100, 9999),
-                log_text=transaction_log
-            )
-            
-            # Write the binary record to file
-            output_file.write(record)
-    
-    print("Done. This file is now unreadable by standard text editors.")
+# Write 50 records — roughly 35% junk, 30% important, 35% grey area
+print("Writing legacy_mainframe.dat ...")
+
+with open("legacy_mainframe.dat", "wb") as f:
+    for i in range(50):
+        roll = random.random()
+        if roll < 0.35:
+            log = random.choice(junk_logs)
+        elif roll < 0.65:
+            log = random.choice(important_logs)
+        else:
+            log = random.choice(grey_area_logs)
+
+        f.write(create_ebcdic_record(str(i), fake.name(),
+                                     random.randint(100, 9999), log))
+
+print("Done — 50 records ready.")
