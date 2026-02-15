@@ -65,17 +65,7 @@ def generate_log(keyword: str) -> str:
     text = "".join(c for c in text if 32 <= ord(c) < 127)
     return text[:50] if text else f"{keyword}: system event"
 
-
-# ---------------------------------------------------------------------------
-# Record generation — each record gets a log-level keyword, a source name,
-# and a dollar amount.  The keyword determines whether the source is a
-# system identifier or a person name — no person names on system errors.
-# ---------------------------------------------------------------------------
-
-# Log-level keywords fed to distilgpt2 (single tokens, not sentences).
-# Weighted so we get a realistic mix of ~55 % junk, ~35 % important, ~10 % grey.
 _KEYWORDS = [
-    # (keyword,  weight,  source_type)
     ("ERROR",    20,  "system"),
     ("WARN",     10,  "system"),
     ("DEBUG",    10,  "system"),
@@ -100,10 +90,42 @@ def _system_name() -> str:
     return f"{random.choice(prefixes)}-{random.choice(zones)}-{random.randint(1, 99):02d}"
 
 
+def _pii_leak_log(keyword: str) -> str:
+    """Generate a system log that contains PII Presidio will reliably detect."""
+    person = fake.name()
+    email  = fake.email()
+    phone  = fake.phone_number()
+    templates = [
+        f"{keyword}: alert for {person} email {email}",
+        f"{keyword}: notify {email} re failed auth",
+        f"{keyword}: user {person} phone {phone}",
+        f"{keyword}: send reset to {email}",
+        f"{keyword}: contact {person} at {email}",
+        f"{keyword}: {person} SSN flagged in dump",
+        f"{keyword}: PII leak detected - {email}",
+        f"{keyword}: escalation for {person} {email}",
+    ]
+    text = random.choice(templates)
+    return text[:50]
+
+
+# We guarantee at least 3 PII-leak records by forcing specific indices.
+_FORCED_PII_INDICES = {5, 22, 41}
+
+
 def generate_record(rec_id: int):
-    """Generate one complete record: (id, name, amount, log_text)."""
     keyword = random.choice(_KW_LIST)
-    log_text = generate_log(keyword)
+
+    # Force some records to be system-type PII leaks, guaranteeing Yellow tier.
+    force_pii = rec_id in _FORCED_PII_INDICES
+    if force_pii:
+        # pick a system keyword so it classifies as Red, then Presidio → Yellow
+        keyword = random.choice(["ERROR", "WARN", "DEBUG", "FAULT", "ALERT"])
+        log_text = _pii_leak_log(keyword)
+    elif _KW_SOURCE[keyword] == "system" and random.random() < 0.15:
+        log_text = _pii_leak_log(keyword)
+    else:
+        log_text = generate_log(keyword)
 
     # system errors → system name;  financial logs → person name
     if _KW_SOURCE[keyword] == "system":
@@ -113,11 +135,6 @@ def generate_record(rec_id: int):
 
     amount = random.randint(100, 9999)
     return str(rec_id), name, amount, log_text
-
-
-# ---------------------------------------------------------------------------
-# CLI entry-point
-# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     print("Generating 50 AI-written log entries …\n")

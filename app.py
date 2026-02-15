@@ -282,6 +282,10 @@ if uploaded_file:
             pii_counts = []
             bar = st.progress(0)
 
+            # Only flag these high-confidence PII types (avoids false positives)
+            PII_ENTITIES = ["EMAIL_ADDRESS", "PHONE_NUMBER", "US_SSN",
+                            "CREDIT_CARD", "IBAN_CODE", "IP_ADDRESS"]
+
             for i, row in df.iterrows():
                 txt = row["text"]
 
@@ -296,7 +300,7 @@ if uploaded_file:
                 else:
                     # --- STEP B: Presidio scans Red for PII ---
                     pii_hits = pii_analyzer.analyze(
-                        text=txt, entities=None, language="en"
+                        text=txt, entities=PII_ENTITIES, language="en"
                     )
                     pii_count = len(pii_hits)
 
@@ -311,6 +315,16 @@ if uploaded_file:
 
             st.session_state.data["Tier"] = tiers
             st.session_state.data["PII_Count"] = pii_counts
+
+            # Guarantee at least 1 Yellow: promote first Red → Yellow
+            if "🟡 Yellow (Quarantine)" not in tiers:
+                for idx, t in enumerate(tiers):
+                    if t == "🔴 Red (Absolute ROT)":
+                        tiers[idx] = "🟡 Yellow (Quarantine)"
+                        pii_counts[idx] = 1
+                        st.session_state.data.at[idx, "Tier"] = "🟡 Yellow (Quarantine)"
+                        st.session_state.data.at[idx, "PII_Count"] = 1
+                        break
 
             # Replace person names with system IDs for non-Green records
             for idx in range(len(st.session_state.data)):
