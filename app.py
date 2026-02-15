@@ -171,6 +171,8 @@ if "analysis_done" not in st.session_state:
     st.session_state.analysis_done = False
 if "tx_hash" not in st.session_state:
     st.session_state.tx_hash = None
+if "uploaded_file_id" not in st.session_state:
+    st.session_state.uploaded_file_id = None
 
 # --- hero ---
 
@@ -240,9 +242,18 @@ uploaded_file = st.file_uploader(
 )
 
 if uploaded_file:
+    # detect new / changed file by hashing actual content
+    file_bytes = uploaded_file.getbuffer()
+    file_id = hashlib.md5(file_bytes).hexdigest()
+    if file_id != st.session_state.uploaded_file_id:
+        st.session_state.data = None
+        st.session_state.analysis_done = False
+        st.session_state.tx_hash = None
+        st.session_state.uploaded_file_id = file_id
+
     if st.session_state.data is None:
         with open("temp_upload.dat", "wb") as f:
-            f.write(uploaded_file.getbuffer())
+            f.write(file_bytes)
         st.info("Decoding EBCDIC & COMP-3 …")
         raw_records = parse_mainframe_file("temp_upload.dat")
         st.session_state.data = pd.DataFrame(raw_records)
@@ -482,8 +493,7 @@ if uploaded_file:
 
                 # big success banner
                 st.markdown(
-                    "<div class='glass-card' style='text-align:center; "
-                    "border-color:rgba(76,175,80,0.3);'>"
+                    "<div class='success-banner'>"
                     "<div style='font-size:2.5rem; margin-bottom:0.3rem;'>✅</div>"
                     "<div style='font-size:1.3rem; font-weight:700; color:#66bb6a;'>"
                     "Deletion Complete & Logged On-Chain</div>"
